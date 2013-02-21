@@ -68,7 +68,8 @@ def get_geo(ip):
         return ipgeo_default
 
     for k in _geo_str_keys:
-        rec[k] = rec.get(k, '').decode('latin1')
+        v = rec.get(k) or ''
+        rec[k] = v.decode('latin1')
 
     #fixup - pygeoip exposes region as region_name
     if not rec['region']:
