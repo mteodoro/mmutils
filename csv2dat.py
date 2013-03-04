@@ -10,6 +10,8 @@ import itertools
 import struct
 import time
 
+from functools import partial
+
 import ipaddr
 import pygeoip
 
@@ -64,13 +66,22 @@ def parse_args(argv):
     if argv is None:
         argv = sys.argv[1:]
     p = optparse.OptionParser()
-    #p.usage = '%prog [options] <arg>+'
+
+    cmdlist = []
+    for cmd, (f, usage) in sorted(cmds.iteritems()):
+        cmdlist.append('%-8s\t%%prog %s' % (cmd, usage))
+    cmdlist = '\n  '.join(cmdlist)
+
+    p.usage = '%%prog [options] <cmd> <arg>+\n\nExamples:\n  %s' % cmdlist
 
     p.add_option('-d', '--debug', action='store_true',
             default=False, help="debug mode")
+    p.add_option('-g', '--geoip', action='store_true',
+            default=False, help='test with C GeoIP module')
     p.add_option('-w', '--write-dat', help='write filename.dat')
     p.add_option('-l', '--locations', help='city locations csv')
     opts, args = p.parse_args(argv)
+
     #sanity check
     if not args or args[0] not in cmds:
         p.error('missing command. choose from: %s' % ' '.join(sorted(cmds)))
@@ -78,29 +89,26 @@ def parse_args(argv):
     return opts, args
 
 
-def test_dbs(args):
-    try:
+def test_dbs(opts, args):
+    """test reference.dat and test.dat against a list of IPs and print any differences"""
+    if opts.geoip:
         import GeoIP
         geo_open = GeoIP.open
-        print 'using GeoIP module'
-    except ImportError:
-        print 'using pygeoip module'
+        logging.debug('using GeoIP module')
+    else:
         geo_open = pygeoip.GeoIP
+        logging.debug('using pygeoip module')
 
-    try:
-        dbtype, mm_file, test_file = args[:3]
-        gi_std = geo_open(mm_file, pygeoip.MEMORY_CACHE)
-        gi_tst = geo_open(test_file, pygeoip.MEMORY_CACHE)
-    except Exception:
-        print 'cat ips.txt | ./csv2dat.py test [asn|city] reference.dat test.dat'
-        raise
+    dbtype, ref_file, test_file = args[:3]
+    gi_ref = geo_open(ref_file, pygeoip.MEMORY_CACHE)
+    gi_tst = geo_open(test_file, pygeoip.MEMORY_CACHE)
 
     if dbtype in ('asn', 'org'):
-        get_std = gi_std.org_by_addr
+        get_ref = gi_ref.org_by_addr
         get_tst = gi_tst.org_by_addr
         isequal = lambda lhs, rhs: lhs == rhs
     elif dbtype == 'city':
-        get_std = gi_std.record_by_addr
+        get_ref = gi_ref.record_by_addr
         get_tst = gi_tst.record_by_addr
         def isequal(lhs, rhs):
             if lhs and rhs:
@@ -114,23 +122,24 @@ def test_dbs(args):
     ok = bad = 0
     for ip in fileinput.input(args[3:]):
         ip = ip.strip()
-        std = get_std(ip)
+        ref = get_ref(ip)
         tst = get_tst(ip)
-        if not isequal(std, tst):
-            print ip, std, tst
+        if not isequal(ref, tst):
+            print ip, ref, tst
             bad += 1
         else:
             ok += 1
     print 'ok:', ok, 'bad:', bad
+test_dbs.usage = 'test [asn|city] reference.dat test.dat ips.txt'
 
 
 def gen_csv(f):
     """peek at rows from a csv and start yielding when we get past the comments
-    to a row that starts with an int"""
+    to a row that starts with an int (split at : to check IPv6)"""
     cr = csv.reader(f)
     for row in cr:
         try:
-            int(row[0])
+            int(row[0].split(':')[0])
             break
         except ValueError:
             pass
@@ -139,15 +148,12 @@ def gen_csv(f):
 
 def flatten_city(opts, args):
     """flatten MM blocks and locations CSVs into one file for easier editing"""
-    if not opts.locations:
-        print 'usage: cat GeoLiteCity-Blocks.csv | ./csv2mm.py -l GeoLiteCity-Location.csv flat > flatcity.csv'
-        return
-
     id_loc = dict((row[0], row[1:]) for row in gen_csv(open(opts.locations)))
     cw = csv.writer(sys.stdout, lineterminator='\n')
     for row in gen_csv(fileinput.input(args)):
         row[-1:] = id_loc[row[-1]]
         cw.writerow(row)
+flatten_city.usage = '-l GeoLiteCity-Location.csv flat GeoLiteCity-Blocks.csv > flatcity.csv'
 
 
 class RadixTreeNode(object):
@@ -171,9 +177,8 @@ class RadixTree(object):
     def __setitem__(self, net, data):
         self.netcount += 1
         inet = int(net)
-        seek_depth = 31
         node = self.segments[0]
-        for depth in range(seek_depth, seek_depth - (net.prefixlen-1), -1):
+        for depth in range(self.seek_depth, self.seek_depth - (net.prefixlen-1), -1):
             if inet & (1 << depth):
                 if not node.rhs:
                     node.rhs = RadixTreeNode(len(self.segments))
@@ -195,7 +200,7 @@ class RadixTree(object):
             #store net after data for easier debugging
             data = data, net
 
-        if inet & (1 << seek_depth - (net.prefixlen-1)):
+        if inet & (1 << self.seek_depth - (net.prefixlen-1)):
             node.rhs = data
         else:
             node.lhs = data
@@ -263,7 +268,9 @@ class RadixTree(object):
 
 
 class ASNRadixTree(RadixTree):
-    usage = 'cat GeoIPASNum2.csv | ./csv2mm.py -w mmasn.dat mmasn'
+    usage = '-w mmasn.dat mmasn GeoIPASNum2.csv'
+    cmd = 'mmasn'
+    seek_depth = 31
     edition = pygeoip.const.ASNUM_EDITION
     reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
     segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
@@ -278,8 +285,25 @@ class ASNRadixTree(RadixTree):
         return data + '\0'
 
 
+class ASNv6RadixTree(ASNRadixTree):
+    usage = '-w mmasn6.dat mmasn6 GeoIPASNum2v6.csv'
+    cmd = 'mmasn6'
+    seek_depth = 127
+    edition = pygeoip.const.ASNUM_EDITION_V6
+    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
+
+    def gen_nets(self, opts, args):
+        for _, _, lo, hi, asn in gen_csv(fileinput.input(args)):
+            lo, hi = ipaddr.IPAddress(int(lo)), ipaddr.IPAddress(int(hi))
+            nets = ipaddr.summarize_address_range(lo, hi)
+            yield nets, (asn,)
+
+
 class CityRev1RadixTree(RadixTree):
-    usage = 'cat GeoLiteCity-Blocks.csv | ./csv2mm.py -w mmcity.dat -l GeoLiteCity-Location.csv mmcity'
+    usage = '-w mmcity.dat [-l GeoLiteCity-Location.csv] mmcity GeoLiteCity-Blocks.csv'
+    cmd = 'mmcity'
+    seek_depth = 31
     edition = pygeoip.const.CITY_EDITION_REV1
     reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
     segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
@@ -323,28 +347,26 @@ class CityRev1RadixTree(RadixTree):
         return ''.join(buf)
 
 
-cmds = {
-    'flat': None,
-    'test': None,
-    'mmasn': ASNRadixTree,
-    'mmcity': CityRev1RadixTree,
-}
+class CityRev1v6RadixTree(CityRev1RadixTree):
+    usage = '-w mmcity6.dat mmcity6 GeoLiteCityv6.csv'
+    cmd = 'mmcity6'
+    seek_depth = 127
+    edition = pygeoip.const.CITY_EDITION_REV1
+    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
 
-def main(argv=None):
-    global opts
-    opts, args = parse_args(argv)
-    init_logger(opts)
-    logging.debug(opts)
-    logging.debug(args)
+    def gen_nets(self, opts, args):
+        for row in gen_csv(fileinput.input(args)):
+            lo, hi = row[2:4]
+            lo, hi = ipaddr.IPAddress(int(lo)), ipaddr.IPAddress(int(hi))
+            nets = ipaddr.summarize_address_range(lo, hi)
+            #v6 postal_code is after lat/lon instead of before like v4
+            country, region, city, lat, lon, postal_code, metro_code, area_code = row[4:]
+            yield nets, (country, region, city, postal_code, lat, lon, metro_code, area_code)
 
-    cmd = args.pop(0)
-    if cmd == 'test':
-        return test_dbs(args)
-    elif cmd == 'flat':
-        return flatten_city(opts, args)
 
+def build_dat(RTree, opts, args):
     tstart = time.time()
-    RTree = cmds[cmd]
     r = RTree(debug=opts.debug)
 
     r.load(opts, args)
@@ -358,6 +380,24 @@ def main(argv=None):
     tstop = time.time()
     print 'wrote %d-node trie with %d networks (%d distinct labels) in %d seconds' % (
             len(r.segments), r.netcount, len(r.data_offsets), tstop - tstart)
+
+
+rtrees = [ASNRadixTree, ASNv6RadixTree, CityRev1RadixTree, CityRev1v6RadixTree]
+cmds = dict((rtree.cmd, (partial(build_dat, rtree), rtree.usage)) for rtree in rtrees)
+cmds['flat'] = (flatten_city, flatten_city.usage)
+cmds['test'] = (test_dbs, test_dbs.usage)
+
+def main(argv=None):
+    global opts
+    opts, args = parse_args(argv)
+    init_logger(opts)
+    logging.debug(opts)
+    logging.debug(args)
+
+    cmd = args.pop(0)
+    cmd, usage = cmds[cmd]
+    return cmd(opts, args)
+
 
 if __name__ == '__main__':
     rval = main()
