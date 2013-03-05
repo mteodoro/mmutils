@@ -136,14 +136,15 @@ test_dbs.usage = 'test [asn|city] reference.dat test.dat ips.txt'
 def gen_csv(f):
     """peek at rows from a csv and start yielding when we get past the comments
     to a row that starts with an int (split at : to check IPv6)"""
-    cr = csv.reader(f)
-    for row in cr:
+    def startswith_int(row):
         try:
-            int(row[0].split(':')[0])
-            break
+            int(row[0].split(':', 1)[0])
+            return True
         except ValueError:
-            pass
-    return itertools.chain([row], cr)
+            return False
+
+    cr = csv.reader(f)
+    return itertools.dropwhile(lambda x: not startswith_int(x), cr)
 
 
 def flatten_city(opts, args):
