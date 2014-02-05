@@ -91,23 +91,27 @@ def parse_args(argv):
 
 def test_dbs(opts, args):
     """test reference.dat and test.dat against a list of IPs and print any differences"""
+    ref_file, tst_file = args[:2]
+    gi_ref = pygeoip.GeoIP(ref_file, pygeoip.MEMORY_CACHE)
+    gi_tst = pygeoip.GeoIP(tst_file, pygeoip.MEMORY_CACHE)
+    dbtype = gi_ref._databaseType
+    if gi_ref._databaseType != gi_tst._databaseType:
+        print "error: database types don't match"
+        exit(1)
+
     if opts.geoip:
         import GeoIP
-        geo_open = GeoIP.open
         logging.debug('using GeoIP module')
+        gi_ref = GeoIP.open(ref_file, pygeoip.MEMORY_CACHE)
+        gi_tst = GeoIP.open(test_file, pygeoip.MEMORY_CACHE)
     else:
-        geo_open = pygeoip.GeoIP
         logging.debug('using pygeoip module')
 
-    dbtype, ref_file, test_file = args[:3]
-    gi_ref = geo_open(ref_file, pygeoip.MEMORY_CACHE)
-    gi_tst = geo_open(test_file, pygeoip.MEMORY_CACHE)
-
-    if dbtype in ('asn', 'org'):
+    if dbtype in (pygeoip.const.ASNUM_EDITION, pygeoip.const.ASNUM_EDITION_V6):
         get_ref = gi_ref.org_by_addr
         get_tst = gi_tst.org_by_addr
         isequal = lambda lhs, rhs: lhs == rhs
-    elif dbtype == 'city':
+    elif dbtype in(pygeoip.const.CITY_EDITION_REV1, pygeoip.const.CITY_EDITION_REV1_V6):
         get_ref = gi_ref.record_by_addr
         get_tst = gi_tst.record_by_addr
         def isequal(lhs, rhs):
@@ -120,7 +124,7 @@ def test_dbs(opts, args):
             return lhs == rhs
 
     ok = bad = 0
-    for ip in fileinput.input(args[3:]):
+    for ip in fileinput.input(args[2:]):
         ip = ip.strip()
         ref = get_ref(ip)
         tst = get_tst(ip)
@@ -130,7 +134,7 @@ def test_dbs(opts, args):
         else:
             ok += 1
     print 'ok:', ok, 'bad:', bad
-test_dbs.usage = 'test [asn|city] reference.dat test.dat ips.txt'
+test_dbs.usage = 'test reference.dat test.dat ips.txt'
 
 
 def gen_csv(f):
