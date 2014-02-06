@@ -19,6 +19,7 @@ cc_idx = dict((cc.lower(), i) for i,cc in enumerate(pygeoip.const.COUNTRY_CODES)
 cc_idx['--'] = cc_idx['']
 cc_idx['cw'] = cc_idx['an'] #netherlands antilles / curacao
 cc_idx['uk'] = cc_idx['gb'] #uk / great britain
+cc_idx['sx'] = cc_idx['fx'] #st. martin?
 
 def init_logger(opts):
     level = logging.INFO
@@ -76,11 +77,11 @@ def test_dbs(opts, args):
     else:
         logging.debug('using pygeoip module')
 
+    isequal = lambda lhs, rhs: lhs == rhs
     if dbtype in (pygeoip.const.ASNUM_EDITION, pygeoip.const.ASNUM_EDITION_V6):
         get_ref = gi_ref.org_by_addr
         get_tst = gi_tst.org_by_addr
-        isequal = lambda lhs, rhs: lhs == rhs
-    elif dbtype in(pygeoip.const.CITY_EDITION_REV1, pygeoip.const.CITY_EDITION_REV1_V6):
+    elif dbtype in (pygeoip.const.CITY_EDITION_REV1, pygeoip.const.CITY_EDITION_REV1_V6):
         get_ref = gi_ref.record_by_addr
         get_tst = gi_tst.record_by_addr
         def isequal(lhs, rhs):
@@ -91,6 +92,12 @@ def test_dbs(opts, args):
                     lhs[k] = int(lhs[k])
                     rhs[k] = int(rhs[k])
             return lhs == rhs
+    elif dbtype in (pygeoip.const.COUNTRY_EDITION, pygeoip.const.COUNTRY_EDITION_V6):
+        get_ref = gi_ref.country_code_by_addr
+        get_tst = gi_tst.country_code_by_addr
+    else:
+        print "error: unknown database type"
+        exit(1)
 
     ok = bad = 0
     for ip in fileinput.input(args[2:]):
@@ -108,12 +115,12 @@ test_dbs.usage = 'test reference.dat test.dat ips.txt'
 
 def gen_csv(f):
     """peek at rows from a csv and start yielding when we get past the comments
-    to a row that starts with an int (split at : to check IPv6)"""
+    to a row that starts with an int"""
     def startswith_int(row):
         try:
-            int(row[0].split(':', 1)[0])
+            int(row[0][0])
             return True
-        except ValueError:
+        except (ValueError, IndexError):
             return False
 
     cr = csv.reader(f)
@@ -246,8 +253,8 @@ class ASNRadixTree(RadixTree):
     cmd = 'mmasn'
     seek_depth = 31
     edition = pygeoip.const.ASNUM_EDITION
-    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
-    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
 
     def gen_nets(self, opts, args):
         for lo, hi, asn in gen_csv(fileinput.input(args)):
@@ -264,8 +271,8 @@ class ASNv6RadixTree(ASNRadixTree):
     cmd = 'mmasn6'
     seek_depth = 127
     edition = pygeoip.const.ASNUM_EDITION_V6
-    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
-    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
 
     def gen_nets(self, opts, args):
         for _, _, lo, hi, asn in gen_csv(fileinput.input(args)):
@@ -279,8 +286,8 @@ class CityRev1RadixTree(RadixTree):
     cmd = 'mmcity'
     seek_depth = 31
     edition = pygeoip.const.CITY_EDITION_REV1
-    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
-    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
 
     def gen_nets(self, opts, args):
         id_loc = None
@@ -309,7 +316,7 @@ class CityRev1RadixTree(RadixTree):
             buf.append(chr(cc_idx[country]))
         except KeyError:
             logging.warning("'%s': missing country. update pygeoip.const.COUNTRY_CODES?", country)
-            buf.append('--')
+            buf.append(chr(cc_idx['']))
         buf.append('\0'.join((region, city, postal_code)))
         buf.append('\0')
         buf.append(self.encode_rec(int((lat + 180) * 10000), 3))
@@ -326,8 +333,8 @@ class CityRev1v6RadixTree(CityRev1RadixTree):
     cmd = 'mmcity6'
     seek_depth = 127
     edition = pygeoip.const.CITY_EDITION_REV1
-    reclen = pygeoip.const.SEGMENT_RECORD_LENGTH
-    segreclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
 
     def gen_nets(self, opts, args):
         for row in gen_csv(fileinput.input(args)):
@@ -337,6 +344,73 @@ class CityRev1v6RadixTree(CityRev1RadixTree):
             #v6 postal_code is after lat/lon instead of before like v4
             country, region, city, lat, lon, postal_code, metro_code, area_code = row[4:]
             yield nets, (country, region, city, postal_code, lat, lon, metro_code, area_code)
+
+
+class CountryRadixTree(RadixTree):
+    usage = '-w mmcountry.dat mmcountry GeoIPCountryWhois.csv'
+    cmd = 'mmcountry'
+    seek_depth = 31
+    edition = pygeoip.const.COUNTRY_EDITION
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+
+    def gen_nets(self, opts, args):
+        for _, _, lo, hi, cc, _ in gen_csv(fileinput.input(args)):
+            lo, hi = ipaddr.IPAddress(int(lo)), ipaddr.IPAddress(int(hi))
+            nets = ipaddr.summarize_address_range(lo, hi)
+            yield nets, (cc,)
+
+    def encode(self, cc):
+        #unused
+        return ''
+
+    def serialize_node(self, node):
+        if not node:
+            #empty leaf
+            rec = pygeoip.const.COUNTRY_BEGIN
+        elif isinstance(node, RadixTreeNode):
+            #internal node
+            rec = node.segment
+        else:
+            #data leaf
+            data = node[0] if self.debug else node
+            cc = data[0]
+            try:
+                offset = cc_idx[cc.lower()]
+            except KeyError:
+                logging.warning("'%s': missing country. update pygeoip.const.COUNTRY_CODES?", cc)
+                offset = 0
+            #data leaves directly encode cc index as an offset
+            rec = pygeoip.const.COUNTRY_BEGIN + offset
+        return self.encode_rec(rec, self.reclen)
+
+    def serialize(self, f):
+        for node in self.segments:
+            f.write(self.serialize_node(node.lhs))
+            f.write(self.serialize_node(node.rhs))
+
+        f.write(chr(0x00) * 3)
+        f.write('csv2dat.py') #.dat file comment - can be anything
+        f.write(chr(0xFF) * 3)
+        f.write(chr(self.edition))
+        f.write(self.encode_rec(len(self.segments), self.segreclen))
+
+
+class Countryv6RadixTree(CountryRadixTree):
+    usage = '-w mmcountry6.dat mmcountry6 GeoIPv6.csv'
+    cmd = 'mmcountry6'
+    seek_depth = 127
+    edition = pygeoip.const.COUNTRY_EDITION_V6
+    reclen = pygeoip.const.STANDARD_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+
+    def gen_nets(self, opts, args):
+        for row in gen_csv(fileinput.input(args)):
+            #handle weird space before quote problems
+            lo, hi, cc = [x.strip(' "') for x in row[2:5]]
+            lo, hi = ipaddr.IPAddress(int(lo)), ipaddr.IPAddress(int(hi))
+            nets = ipaddr.summarize_address_range(lo, hi)
+            yield nets, (cc,)
 
 
 def build_dat(RTree, opts, args):
@@ -356,7 +430,11 @@ def build_dat(RTree, opts, args):
             len(r.segments), r.netcount, len(r.data_offsets), tstop - tstart)
 
 
-rtrees = [ASNRadixTree, ASNv6RadixTree, CityRev1RadixTree, CityRev1v6RadixTree]
+rtrees = [
+    ASNRadixTree, ASNv6RadixTree,
+    CityRev1RadixTree, CityRev1v6RadixTree,
+    CountryRadixTree, Countryv6RadixTree,
+]
 cmds = dict((rtree.cmd, (partial(build_dat, rtree), rtree.usage)) for rtree in rtrees)
 cmds['flat'] = (flatten_city, flatten_city.usage)
 cmds['test'] = (test_dbs, test_dbs.usage)

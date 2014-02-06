@@ -26,7 +26,7 @@ Convert MaxMind ASN CSV to .dat format:
 
 Test mmasn.dat file against list of IPs, one per line:
 
-    $ csv2dat.py test asn GeoIPASNum.dat mmasn.dat ips.txt
+    $ csv2dat.py test GeoIPASNum.dat mmasn.dat ips.txt
     ok: 670135 bad: 0
 
 Convert MaxMind City files to .dat format:
@@ -36,7 +36,7 @@ Convert MaxMind City files to .dat format:
 
 Test mmcity.dat file against list of IPs, one per line:
 
-    $ csv2dat.py test city GeoLiteCity.dat mmcity.dat ips.txt
+    $ csv2dat.py test GeoLiteCity.dat mmcity.dat ips.txt
     ok: 670135 bad: 0
 
 Flatten MaxMind City CSVs into one file (for easier editing):
@@ -57,4 +57,13 @@ Convert MaxMind City v6 CSV to .dat format:
 
     $ csv2dat.py -w mmcity6.dat mmcity6 GeoLiteCityv6.csv
     wrote 80637-node trie with 13074 networks (205 distinct labels) in 2 seconds
+
+Convert MaxMind Country CSV to .dat format:
+
+    $ csv2dat.py -w mmcountry.dat mmcountry GeoIPCountryWhois.csv
+    wrote 136109-node trie with 133498 networks (250 distinct labels) in 8 seconds
+
+Convert MaxMind Country v6 CSV to .dat format:
+    $ csv2dat.py -w mmcountry6.dat mmcountry6 GeoIPv6.csv
+    wrote 102601-node trie with 17580 networks (215 distinct labels) in 3 seconds
 
