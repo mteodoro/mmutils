@@ -78,7 +78,8 @@ def test_dbs(opts, args):
         logging.debug('using pygeoip module')
 
     isequal = lambda lhs, rhs: lhs == rhs
-    if dbtype in (pygeoip.const.ASNUM_EDITION, pygeoip.const.ASNUM_EDITION_V6):
+    if dbtype in (pygeoip.const.ASNUM_EDITION, pygeoip.const.ASNUM_EDITION_V6,
+            pygeoip.const.ISP_EDITION, pygeoip.const.ORG_EDITION):
         get_ref = gi_ref.org_by_addr
         get_tst = gi_tst.org_by_addr
     elif dbtype in (pygeoip.const.CITY_EDITION_REV1, pygeoip.const.CITY_EDITION_REV1_V6):
@@ -281,6 +282,24 @@ class ASNv6RadixTree(ASNRadixTree):
             yield nets, (asn,)
 
 
+class ISPRadixTree(ASNRadixTree):
+    usage = '-w mmisp.dat mmisp GeoIPISP.csv'
+    cmd = 'mmisp'
+    seek_depth = 31
+    edition = pygeoip.const.ISP_EDITION
+    reclen = pygeoip.const.ORG_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+
+
+class OrgRadixTree(ASNRadixTree):
+    usage = '-w mmorg.dat mmorg GeoIPOrg.csv'
+    cmd = 'mmorg'
+    seek_depth = 31
+    edition = pygeoip.const.ORG_EDITION
+    reclen = pygeoip.const.ORG_RECORD_LENGTH
+    segreclen = pygeoip.const.SEGMENT_RECORD_LENGTH
+
+
 class CityRev1RadixTree(RadixTree):
     usage = '-w mmcity.dat [-l GeoLiteCity-Location.csv] mmcity GeoLiteCity-Blocks.csv'
     cmd = 'mmcity'
@@ -434,6 +453,7 @@ rtrees = [
     ASNRadixTree, ASNv6RadixTree,
     CityRev1RadixTree, CityRev1v6RadixTree,
     CountryRadixTree, Countryv6RadixTree,
+    ISPRadixTree, OrgRadixTree,
 ]
 cmds = dict((rtree.cmd, (partial(build_dat, rtree), rtree.usage)) for rtree in rtrees)
 cmds['flat'] = (flatten_city, flatten_city.usage)

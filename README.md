@@ -67,3 +67,11 @@ Convert MaxMind Country v6 CSV to .dat format:
     $ csv2dat.py -w mmcountry6.dat mmcountry6 GeoIPv6.csv
     wrote 102601-node trie with 17580 networks (215 distinct labels) in 3 seconds
 
+Convert MaxMind ISP CSV to .dat format:
+    $ csv2dat.py -w mmisp.dat mmisp GeoIPISP.csv
+    wrote 378619-node trie with 303605 networks (45963 distinct labels) in 19 seconds
+
+Convert MaxMind Org CSV to .dat format:
+    $ csv2dat.py -w mmorg.dat mmorg GeoIPOrg.csv
+    wrote 378619-node trie with 303605 networks (45963 distinct labels) in 19 seconds
+
