@@ -1,6 +1,8 @@
 mmutils
 =======
 
+**Note: These tools work with MaxMind Legacy format databases.  For information on the new GeoIP2 databases, including a writer, see: http://maxmind.github.io/MaxMind-DB/**
+
 Tools for working with MaxMind GeoIP csv and dat files
 ------------------------------------------------------
 
