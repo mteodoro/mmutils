@@ -43,6 +43,7 @@ def init_asn(db='GeoIPASNum.dat', flags=GEOIP_MEMORY_CACHE):
 _geo_default = {
     'area_code': 0,
     'city': u'',
+    'continent': u'',
     'country_code': u'',
     'country_code3': u'',
     'country_name': u'',
@@ -52,7 +53,7 @@ _geo_default = {
     'metro_code': 0,
     'postal_code': u'',
     'region': u'',
-    'region_name': u'',
+    'region_code': u'',
     'time_zone': u''
 }
 _geo_str_keys = set(k for k,v in _geo_default.iteritems() if v == u'')
@@ -71,9 +72,9 @@ def get_geo(ip):
         v = rec.get(k) or ''
         rec[k] = v.decode('latin1')
 
-    #fixup - pygeoip exposes region as region_name
+    #fixup - pygeoip exposes region as region_code
     if not rec['region']:
-        rec['region'] = rec['region_name']
+        rec['region'] = rec['region_code']
     return IpGeo(**rec)
 
 
